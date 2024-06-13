@@ -1,0 +1,374 @@
+/**
+ * @NApiVersion 2.0
+ * @NScriptType ClientScript
+ * @NModuleScope Public
+ */
+
+define(['N/currentRecord', 'N/record', 'N/format', 'N/url', 'N/runtime', 'N/log', 'N/https', 'N/search', 'N/ui/dialog'], function (currentRecord, r, format, url, runtime, log, https, search, dialog) {
+
+    var globalOldStatus = '';
+    var globalNewStatus = '';
+
+
+    function pageInit(context) { // When the page loads (in edit mode), grab the Approval Status for comparison later.
+        if (context.mode !== 'edit') {
+            return false
+        } else {
+            log.debug({ title: 'mode', details: 'Mode: ' + context.mode });
+
+            var record = context.currentRecord;
+
+
+            var oldStatus = record.getText({ fieldId: 'custrecord_pc_newitem_approvalstatus' });
+
+            globalOldStatus = oldStatus;
+
+            log.debug({ title: 'globalOldStatus', details: globalOldStatus });
+        }
+    }
+
+
+    function fieldChanged(context) { // When the user changes the Approval Status to "Approved", save the user name and date/time for tracking and for use later.  If the status is changed to Rejected, clear those fields.
+        var user = runtime.getCurrentUser();
+        var record = context.currentRecord;
+        var fieldName = context.fieldId;
+
+
+        if (fieldName === 'custrecord_pc_newitem_approvalstatus') {
+            var date = new Date();
+            var todaysDate = format.format({
+                value: date,
+                type: format.Type.DATE,
+                timezone: format.Timezone.AMERICA_LOS_ANGELES
+            });
+
+
+            log.debug({ title: 'fieldchanged user', details: 'User Name: ' + user.name });
+            var approvalStatus = record.getText({ fieldId: 'custrecord_pc_newitem_approvalstatus' });
+
+            if (approvalStatus == 'Approved') {
+                record.setValue({
+                    fieldId: 'custrecord_pc_newitem_dateapproved',
+                    value: date
+                });
+                record.setText({
+                    fieldId: 'custrecord_pc_newitem_approvedby',
+                    text: user.name
+                });
+                record.setText({
+                    fieldId: 'custrecord_pc_newitem_approvedon',
+                    text: todaysDate
+                })
+
+            } else if (approvalStatus == 'Rejected') {
+                record.setValue({
+                    fieldId: 'custrecord_pc_newitem_dataepproved',
+                    value: null
+                });
+                record.setValue({
+                    fieldId: 'custrecord_pc_newitem_approvedon',
+                    value: null
+                });
+            } else {
+                return false;
+            };
+
+            var globalNewStatus = approvalStatus;
+
+            log.debug({ title: 'globalNewStatus', details: globalNewStatus })
+        };
+    }
+
+    function saveRecord(context) { // When the user presses save, check the Approval Status & User Name fields.  Create new item using details from the Item Request form and redirect to the New Item Page.
+
+        record = context.currentRecord;
+        var requestName = record.getValue({ fieldId: 'name' });
+
+        log.debug({ title: 'saveRecord function', details: 'requestName: ' + requestName });
+
+        approverField = record.getText({ fieldId: 'custrecord_pc_newitem_approvedby' });
+        approvalDate = record.getText({ fieldId: 'custrecord_pc_newitem_approvedon' });
+        var formName = record.getValue({fieldId: 'customform'});
+
+        var internalId = record.getValue({ fieldId: 'internalid' });
+
+        function createSeedItem() {
+
+            //GENERATE SKU HERE
+
+            //END SKU
+
+            var itemWeight = record.getValue({ fieldId: 'custrecord112' }); //USE TO GENERATE SKU
+            var itemSubsidiary = record.getValue({ fieldId: 'custrecord_pc_newitem_subsidiaries' });
+            var displayName = record.getText({ fieldId: 'custrecord_pc_newitem_name' });
+            var itemClass = record.getValue({ fieldId: 'custrecord_pc_newitem_class' });
+            var itemSpecies = record.getValue({ fieldId: 'custrecord_pc_newitem_species' });
+            var itemSubSpecies = record.getValue({ fieldId: 'custrecord_pc_newitem_subspecies' });
+            var itemVariety = record.getValue({ fieldId: 'custrecord_pc_newitem_variety' });
+            var itemRequestId = record.getValue({ fieldId: 'id' });
+            var itemContainer = record.getText({ fieldId: 'custrecord_pc_newitem_uompacked' });
+
+            log.debug({ title: 'variables', details: 'DisplayName: ' + displayName + ' Class: ' + itemClass + ' Species: ' + itemSpecies + ' SubSpecies :' + itemSubSpecies + ' Variety: ' + itemVariety });
+
+            var newItem = r.create({
+                type: r.Type.LOT_NUMBERED_ASSEMBLY_ITEM,
+            });
+            // ADD SKU
+            newItem.setText({ //NAME
+                fieldId: 'displayname',
+                text: displayName
+            });
+            //ADD DESCRIPTION
+
+            newItem.setText({ //DESCRIPTION
+                fieldId: 'description',
+                text: itemWeight + 'LB ' + itemContainer + ' OF ' + itemSpecies + ' ' + itemSubSpecies + ' ' + itemVariety
+            });
+
+            newItem.setText({ //SKU
+                fieldId: 'itemid',
+                text: itemSpecies + 'SEED' + itemWeight + 'LB-00' + itemRequestId
+            });
+
+            newItem.setValue({
+                fieldId: 'custitem_pc_createdfrom',
+                value: itemRequestId
+            });
+
+            newItem.setValue({
+                fieldId: 'class',
+                value: itemClass
+            });
+
+            newItem.setValue({
+                fieldId: 'subsidiary',
+                value: itemSubsidiary
+            });
+
+            newItem.setValue({
+                fieldId: 'custitem_seed_species',
+                value: itemSpecies
+            });
+
+            newItem.setValue({
+                fieldId: 'custitem_seed_subspecies',
+                value: itemSubSpecies
+            });
+
+            newItem.setValue({
+                fieldId: 'custitem_seed_variety',
+                value: itemVariety
+            });
+
+            //Accounting defaults
+            newItem.setValue({
+                fieldId: 'costcategory',
+                value: 5
+            });
+
+            newItem.setText({
+                fieldId: 'atpmethod',
+                text: 'Cumulative ATP with Look Ahead'
+            });
+
+            newItem.setValue({
+                fieldId: 'taxschedule',
+                value: 1
+            });
+            newItem.setValue({ //UNIT TYPE = Each
+                fieldId: 'unitstype',
+                value: 3
+            });
+
+            //ACCOUNTING FIELDS
+
+            newItem.setValue({
+                fieldId: 'cogsaccount',
+                value: 212
+            });
+
+            newItem.setValue({
+                fieldId: 'intercocogsaccount',
+                value: 624
+            });
+
+            newItem.setValue({
+                fieldId: 'assetaccount',
+                value: 211
+            });
+
+            newItem.setValue({
+                fieldId: 'incomeaccount',
+                value: 54
+            });
+
+            newItem.setValue({
+                fieldId: 'intercoincomeaccount',
+                value: 623
+            });
+
+            //Save Item
+            var finishedItem = newItem.save()
+            log.debug({ title: 'Saved Record status update', details: 'Record saved: ' + finishedItem })
+
+            log.debug({
+                title: 'newItemId',
+                details: 'Internal ID #: ' + finishedItem
+            });
+
+            record.setValue({
+                fieldId: 'custrecord_pc_newitem_item',
+                value: finishedItem
+            });
+
+            // open new item record on redirect --> need to fix so it doesn't open a pop up but just takes you to a new page with this tab 
+
+            var redirect = url.resolveRecord({
+                recordType: r.Type.LOT_NUMBERED_ASSEMBLY_ITEM,
+                recordId: finishedItem,
+                isEditMode: false
+            });
+
+            log.debug({ title: 'url details', details: 'url is: ' + redirect });
+
+            //Load newly created Item in new tab
+
+            window.open(redirect); //THIS LINE WAS PART OF FUNCTIONAL PROCESS BEFORE
+
+
+            return true;
+        }
+
+        function createEnergyItem() {
+            var displayName = record.getText({ fieldId: 'custrecord_pc_newitem_name' });
+            var itemClass = record.getValue({ fieldId: 'custrecord_pc_newitem_class' });
+            var itemRequestId = record.getValue({ fieldId: 'id' });
+        
+            log.debug({ title: 'variables', details: 'DisplayName: ' + displayName + ' Class: ' + itemClass });
+        
+            var newItem = r.create({
+                type: r.Type.ASSEMBLY_ITEM,
+            });
+            newItem.setText({
+                fieldId: 'itemid',
+                text: displayName
+            });
+        
+            newItem.setValue({
+                fieldId: 'custitem_pc_createdfrom',
+                value: itemRequestId
+            });
+        
+            newItem.setValue({
+                fieldId: 'class',
+                value: itemClass
+            });
+        
+            newItem.setValue({
+                fieldId: 'subsidiary',
+                value: 14
+            });
+        
+            newItem.setValue({
+                fieldId: 'costcategory',
+                value: 5
+            });
+        
+            newItem.setText({
+                fieldId: 'atpmethod',
+                text: 'Cumulative ATP with Look Ahead'
+            });
+        
+            newItem.setValue({
+                fieldId: 'taxschedule',
+                value: 1
+            });
+        
+            newItem.setValue({
+                fieldId: 'cogsaccount',
+                value: 212
+            });
+        
+            newItem.setValue({
+                fieldId: 'intercocogsaccount',
+                value: 624
+            });
+        
+            newItem.setValue({
+                fieldId: 'assetaccount',
+                value: 211
+            });
+        
+            newItem.setValue({
+                fieldId: 'incomeaccount',
+                value: 54
+            });
+        
+            newItem.setValue({
+                fieldId: 'intercoincomeaccount',
+                value: 623
+            });
+        
+            var finishedItem = newItem.save()
+            log.debug({ title: 'Saved Record status update', details: 'Record saved: ' + finishedItem })
+        
+            log.debug({
+                title: 'newItemId',
+                details: 'Internal ID #: ' + finishedItem
+            });
+        
+            record.setValue({
+                fieldId: 'custrecord_pc_newitem_item',
+                value: finishedItem
+            });
+        
+            // open new item record in a new windo 
+        
+            var redirect = url.resolveRecord({
+                recordType: r.Type.LOT_NUMBERED_ASSEMBLY_ITEM,
+                recordId: finishedItem,
+                isEditMode: false
+            });
+        
+            log.debug({ title: 'url details', details: 'url is: ' + redirect });
+        
+            window.open(redirect); 
+        
+        
+            return true;
+        }
+
+
+
+        
+
+        if (globalOldStatus != 'Approved' && approverField == runtime.getCurrentUser().name && record.getText({ fieldId: 'customform', text: 'Pratum - Item/UOM Request Seeds Form (MVS)' })) {
+            //call new seed item function if the item request is approved
+            //pretty sure this If statement won't actually check for Approved status...
+            createSeedItem();
+
+            return true;
+
+        } else if (record.getText({ fieldId: 'customform', text: 'Pratum Energy - Item Request' })) {
+            //call new energy item function if the item form is the Energy one
+            createEnergyItem();
+
+            return true;
+            /*          }else if(globalOldStatus != 'Approved' && approverField == runtime.getCurrentUser().name && record.getValue({fieldId: 'custrecord_pc_newitem_subsidiaries', value: 13})) {
+                          createAgronomyItem();
+                          return;*/
+        } else {
+            return true;
+        }
+
+
+
+    }
+
+    return {
+        pageInit: pageInit,
+        fieldChanged: fieldChanged,
+        saveRecord: saveRecord
+
+    };
+});
